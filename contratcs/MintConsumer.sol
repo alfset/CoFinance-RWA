@@ -18,6 +18,53 @@ import {FunctionsRequest} from "@chainlink/contracts@1.4.0/src/v0.8/functions/v1
 contract MintingFunctionsConsumer is FunctionsClient, ConfirmedOwner {
     using FunctionsRequest for FunctionsRequest.Request;
 
+    bytes32 public s_lastRequestId;
+    bytes public s_lastResponse;
+    bytes public s_lastError;
+    uint256 public qty;
+    mapping(address => bool) public CoFIRouter;
+    error UnexpectedRequestID(bytes32 requestId);
+    event Response(
+        bytes32 indexed requestId,
+        uint256 qty,
+        bytes response,
+        bytes err
+    );
+
+    // Router address - Hardcoded for Avalanche Fuji
+    // Check to get the router address for your supported network: https://docs.chain.link/chainlink-functions/supported-networks
+    address router = 0xA9d587a00A31A52Ed70D6026794a8FC5E2F5dCb0;
+
+    // JavaScript source code
+    // Places a market buy order on Alpaca using token payment converted to USD via CoinGecko
+    string source =
+       "const alpacaKey = secret.AlpacaKey;"
+        "const alpacaSecret = 'secret.AlpacaSecret;"
+        "const symbolToMint = args[0];"
+        "const paymentTokenSymbol = args[1];"
+        "const amountPaidRaw = args[2];"
+        "const marketStatusRes = await Functions.makeHttpRequest({"
+        "  url: `https://paper-api.alpaca.markets/v2/clock`,"
+        "  headers: {"// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+import {FunctionsClient} from "@chainlink/contracts@1.4.0/src/v0.8/functions/v1_0_0/FunctionsClient.sol";
+import {ConfirmedOwner} from "@chainlink/contracts@1.4.0/src/v0.8/shared/access/ConfirmedOwner.sol";
+import {FunctionsRequest} from "@chainlink/contracts@1.4.0/src/v0.8/functions/v1_0_0/libraries/FunctionsRequest.sol";
+
+/**
+ * Request testnet LINK and AVAX here: https://faucets.chain.link/
+ * Find information on LINK Token Contracts and get the latest AVAX and LINK faucets here: https://docs.chain.link/resources/link-token-contracts/
+ */
+
+/**
+ * @title MintingFunctionsConsumer
+ * @notice This contract uses Chainlink Functions to place market buy orders on Alpaca based on token payments
+ * @dev This contract uses hardcoded values and should not be used in production.
+ */
+contract MintingFunctionsConsumer is FunctionsClient, ConfirmedOwner {
+    using FunctionsRequest for FunctionsRequest.Request;
+
     // State variables to store the last request ID, response, and error
     bytes32 public s_lastRequestId;
     bytes public s_lastResponse;
@@ -34,60 +81,69 @@ contract MintingFunctionsConsumer is FunctionsClient, ConfirmedOwner {
         bytes32 indexed requestId,
         uint256 qty,
         bytes response,
-        bytes err
-    );
 
-    // Router address - Hardcoded for Avalanche Fuji
-    // Check to get the router address for your supported network: https://docs.chain.link/chainlink-functions/supported-networks
-    address router = 0xA9d587a00A31A52Ed70D6026794a8FC5E2F5dCb0;
-
-    // JavaScript source code
-    // Places a market buy order on Alpaca using token payment converted to USD via CoinGecko
-    string source =
-        "const alpacaKey = 'secret.AlpacaKey';"
-        "const alpacaSecret = 'Secret.Alpcasecret';"
-        "const symbolToMint = args[0];"
-        "const paymentTokenSymbol = args[1];"
-        "const amountPaidRaw = args[2];"
-        "const marketStatusRes = await Functions.makeHttpRequest({"
-        " url: `https://paper-api.alpaca.markets/v2/clock`,"
-        " headers: { 'APCA-API-KEY-ID': alpacaKey, 'APCA-API-SECRET-KEY': alpacaSecret }"
+        "    'APCA-API-KEY-ID': alpacaKey,"
+        "    'APCA-API-SECRET-KEY': alpacaSecret"
+        "  }"
         "});"
         "if (marketStatusRes.error) throw Error('Market status check failed');"
         "if (!marketStatusRes.data?.is_open) return Functions.encodeUint256(0);"
         "const divisor = paymentTokenSymbol.toUpperCase() === 'USDC' ? 1e6 : 1e18;"
         "const amountPaid = parseFloat(amountPaidRaw) / divisor;"
-        "const coinGeckoIdMap = { 'USDC': 'usd-coin', 'WETH': 'ethereum', 'WAVAX': 'avalanche', 'LINK': 'chainlink' };"
+        "const coinGeckoIdMap = {"
+        "  'USDC': 'usd-coin',"
+        "  'WETH': 'ethereum',"
+        "  'WAVAX': 'avalanche-2',"
+        "  'LINK': 'chainlink'"
+        "};"
         "const coinGeckoId = coinGeckoIdMap[paymentTokenSymbol.toUpperCase()] || paymentTokenSymbol.toLowerCase();"
         "const priceRes = await Functions.makeHttpRequest({"
-        " url: `https://api.coingecko.com/api/v3/simple/price?ids=${coinGeckoId}&vs_currencies=usd`"
+        "  url: `https://api.coingecko.com/api/v3/simple/price?ids=${coinGeckoId}&vs_currencies=usd`"
         "});"
         "if (priceRes.error) throw Error('Price fetch failed');"
         "const priceUsd = parseFloat(priceRes.data[coinGeckoId].usd);"
-        "const notionalUsd = (amountPaid * priceUsd * 0.9).toFixed(2);"
+        "const notionalUsd = (amountPaid * priceUsd * 0.9 / 4).toFixed(2);"
         "const order = await Functions.makeHttpRequest({"
-        " url: 'https://paper-api.alpaca.markets/v2/orders', method: 'POST',"
-        " headers: { 'APCA-API-KEY-ID': alpacaKey, 'APCA-API-SECRET-KEY': alpacaSecret, 'Content-Type': 'application/json' },"
-        " data: { symbol: symbolToMint, notional: notionalUsd, side: 'buy', type: 'market', time_in_force: 'day' }"
+        "  url: 'https://paper-api.alpaca.markets/v2/orders',"
+        "  method: 'POST',"
+        "  headers: {"
+        "    'APCA-API-KEY-ID': alpacaKey,"
+        "    'APCA-API-SECRET-KEY': alpacaSecret,"
+        "    'Content-Type': 'application/json'"
+        "  },"
+        "  data: {"
+        "    symbol: symbolToMint,"
+        "    notional: notionalUsd,"
+        "    side: 'buy',"
+        "    type: 'market',"
+        "    time_in_force: 'day'"
+        "  }"
         "});"
         "if (order.error || !order.data?.id) throw Error('Order failed');"
         "const orderId = order.data.id;"
-        "let filled = false, attempts = 0, status;"
+        "let filled = false, attempts = 0, status, statusRes;"
         "while (attempts < 10 && !filled) {"
-        " const statusRes = await Functions.makeHttpRequest({"
-        " url: `https://paper-api.alpaca.markets/v2/orders/${orderId}`,"
-        " headers: { 'APCA-API-KEY-ID': alpacaKey, 'APCA-API-SECRET-KEY': alpacaSecret }"
-        " });"
-        " if (statusRes.error) throw Error('Status check failed');"
-        " status = statusRes.data?.status;"
-        " if (status === 'filled') filled = true;"
-        " else if (['canceled','expired','rejected'].includes(status)) return Functions.encodeUint256(0);"
-        " else await new Promise(r => setTimeout(r, 3000));"
-        " attempts++;"
+        "  statusRes = await Functions.makeHttpRequest({"
+        "    url: `https://paper-api.alpaca.markets/v2/orders/${orderId}`,"
+        "    headers: {"
+        "      'APCA-API-KEY-ID': alpacaKey,"
+        "      'APCA-API-SECRET-KEY': alpacaSecret"
+        "    }"
+        "  });"
+        "  if (statusRes.error) throw Error('Status check failed');"
+        "  status = statusRes.data?.status;"
+        "  if (status === 'filled') {"
+        "    filled = true;"
+        "  } else if (['canceled', 'expired', 'rejected'].includes(status)) {"
+        "    return Functions.encodeUint256(0);"
+        "  } else {"
+        "    await new Promise(r => setTimeout(r, 3000));"
+        "  }"
+        "  attempts++;"
         "}"
         "if (!filled) return Functions.encodeUint256(0);"
-        "const qty = parseFloat(statusRes.data?.qty) || 0;"
-        "const qtyInt = Math.round(qty * 1e18);"
+        "const filledQty = parseFloat(statusRes.data?.filled_qty) * 4 || 0;"
+        "const qtyInt = Math.round(filledQty * 1e18);"
         "return Functions.encodeUint256(qtyInt);";
 
     // Callback gas limit
