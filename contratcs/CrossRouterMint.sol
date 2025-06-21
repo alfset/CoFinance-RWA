@@ -2,7 +2,7 @@
 pragma solidity ^0.8.19;
 
 import "./interfaces/IFunctionsConsumer.sol";
-import "./IAssetToken.sol";
+import "./interfaces/IAssetToken.sol";
 import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v4.9.0/contracts/token/ERC20/IERC20.sol";
 import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v4.9.0/contracts/token/ERC20/utils/SafeERC20.sol";
 import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v4.9.0/contracts/security/ReentrancyGuard.sol";
