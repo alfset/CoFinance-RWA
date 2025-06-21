@@ -17,18 +17,12 @@ import {FunctionsRequest} from "@chainlink/contracts@1.4.0/src/v0.8/functions/v1
  */
 contract BurnFunctionsConsumer is FunctionsClient, ConfirmedOwner {
     using FunctionsRequest for FunctionsRequest.Request;
-
-    // State variables to store the last request ID, response, and error
     bytes32 public s_lastRequestId;
     bytes public s_lastResponse;
     bytes public s_lastError;
     uint256 public tokenAmount;
     mapping(address => bool) public CoFIRouter;
-
-    // Custom error type
     error UnexpectedRequestID(bytes32 requestId);
-
-    // Event to log responses
     event Response(
         bytes32 indexed requestId,
         uint256 tokenAmount,
@@ -40,57 +34,86 @@ contract BurnFunctionsConsumer is FunctionsClient, ConfirmedOwner {
     // Check to get the router address for your supported network: https://docs.chain.link/chainlink-functions/supported-networks
     address router = 0xA9d587a00A31A52Ed70D6026794a8FC5E2F5dCb0;
 
-    // JavaScript source code
+    // source code chainlink Functions
     // Places a market sell order on Alpaca and returns the amount of payment token to send
-    string source =
-        "const alpacaKey = 'secret.alpacakey';"
-        "const alpacaSecret = 'secret.alpacasecret';"
+   string source = 
+        "const alpacaKey = secret.AlpacaKey;"
+        "const alpacaSecret = secret.AlpacaSecret;"
         "const symbolToBurn = args[0];"
         "const paymentTokenSymbol = args[1];"
         "const qtyToSellRaw = args[2];"
         "const marketStatusRes = await Functions.makeHttpRequest({"
-        " url: `https://paper-api.alpaca.markets/v2/clock`,"
-        " headers: { 'APCA-API-KEY-ID': alpacaKey, 'APCA-API-SECRET-KEY': alpacaSecret }"
+        "  url: `https://paper-api.alpaca.markets/v2/clock`,"
+        "  headers: {"
+        "    'APCA-API-KEY-ID': alpacaKey,"
+        "    'APCA-API-SECRET-KEY': alpacaSecret"
+        "  }"
         "});"
-        "if (marketStatusRes.error) throw Error('Market status check failed');"
-        "if (!marketStatusRes.data?.is_open) return Functions.encodeUint256(0);"
-        "const qtyToSell = parseFloat(qtyToSellRaw) / 1e18;"
-        "const order = await Functions.makeHttpRequest({"
-        " url: 'https://paper-api.alpaca.markets/v2/orders', method: 'POST',"
-        " headers: { 'APCA-API-KEY-ID': alpacaKey, 'APCA-API-SECRET-KEY': alpacaSecret, 'Content-Type': 'application/json' },"
-        " data: { symbol: symbolToBurn, qty: qtyToSell.toString(), side: 'sell', type: 'market', time_in_force: 'day' }"
-        "});"
-        "if (order.error || !order.data?.id) throw Error('Order failed');"
-        "const orderId = order.data.id;"
-        "let filled = false, attempts = 0, status;"
-        "while (attempts < 10 && !filled) {"
-        " const statusRes = await Functions.makeHttpRequest({"
-        " url: `https://paper-api.alpaca.markets/v2/orders/${orderId}`,"
-        " headers: { 'APCA-API-KEY-ID': alpacaKey, 'APCA-API-SECRET-KEY': alpacaSecret }"
-        " });"
-        " if (statusRes.error) throw Error('Status check failed');"
-        " status = statusRes.data?.status;"
-        " if (status === 'filled') filled = true;"
-        " else if (['canceled','expired','rejected'].includes(status)) return Functions.encodeUint256(0);"
-        " else await new Promise(r => setTimeout(r, 3000));"
-        " attempts++;"
+        "if (marketStatusRes.error || !marketStatusRes.data?.is_open) return Functions.encodeUint256(0);"
+        "const totalQty = parseFloat(qtyToSellRaw) / 1e18;"
+        "const splitQty = totalQty / 4;"
+        "const orderIds = [];"
+        "for (let i = 0; i < 4; i++) {"
+        "  const order = await Functions.makeHttpRequest({"
+        "    url: 'https://paper-api.alpaca.markets/v2/orders',"
+        "    method: 'POST',"
+        "    headers: {"
+        "      'APCA-API-KEY-ID': alpacaKey,"
+        "      'APCA-API-SECRET-KEY': alpacaSecret,"
+        "      'Content-Type': 'application/json'"
+        "    },"
+        "    data: {"
+        "      symbol: symbolToBurn,"
+        "      qty: splitQty.toString(),"
+        "      side: 'sell',"
+        "      type: 'market',"
+        "      time_in_force: 'day'"
+        "    }"
+        "  });"
+        "  if (order.error || !order.data?.id) throw Error('Order failed');"
+        "  orderIds.push(order.data.id);"
         "}"
-        "if (!filled) return Functions.encodeUint256(0);"
-        "const avgPrice = parseFloat(statusRes.data?.filled_avg_price) || 0;"
-        "const usdReceived = qtyToSell * avgPrice;"
-        "const coinGeckoIdMap = { 'USDC': 'usd-coin', 'WETH': 'ethereum', 'WAVAX': 'avalanche', 'LINK': 'chainlink' };"
+        "let totalUsd = 0;"
+        "for (let i = 0; i < orderIds.length; i++) {"
+        "  let filled = false;"
+        "  let attempts = 0;"
+        "  let statusRes;"
+        "  while (attempts < 10 && !filled) {"
+        "    statusRes = await Functions.makeHttpRequest({"
+        "      url: `https://paper-api.alpaca.markets/v2/orders/${orderIds[i]}`,"
+        "      headers: {"
+        "        'APCA-API-KEY-ID': alpacaKey,"
+        "        'APCA-API-SECRET-KEY': alpacaSecret"
+        "      }"
+        "    });"
+        "    if (statusRes.error) throw Error('Status check failed');"
+        "    const status = statusRes.data?.status;"
+        "    if (status === 'filled') {"
+        "      filled = true;"
+        "      const avgPrice = parseFloat(statusRes.data?.filled_avg_price) || 0;"
+        "      const filledQty = parseFloat(statusRes.data?.filled_qty) || 0;"
+        "      totalUsd += avgPrice * filledQty;"
+        "    } else if (['canceled', 'expired', 'rejected'].includes(status)) {"
+        "      break;"
+        "    } else {"
+        "      await new Promise(r => setTimeout(r, 3000));"
+        "    }"
+        "    attempts++;"
+        "  }"
+        "}"
+        "if (totalUsd === 0) return Functions.encodeUint256(0);"
+        "const coinGeckoIdMap = { 'USDC': 'usd-coin', 'WETH': 'ethereum', 'WAVAX': 'avalanche-2', 'LINK': 'chainlink' };"
         "const coinGeckoId = coinGeckoIdMap[paymentTokenSymbol.toUpperCase()] || paymentTokenSymbol.toLowerCase();"
         "const priceRes = await Functions.makeHttpRequest({"
-        " url: `https://api.coingecko.com/api/v3/simple/price?ids=${coinGeckoId}&vs_currencies=usd`"
+        "  url: `https://api.coingecko.com/api/v3/simple/price?ids=${coinGeckoId}&vs_currencies=usd`"
         "});"
         "if (priceRes.error) throw Error('Price fetch failed');"
         "const priceUsd = parseFloat(priceRes.data[coinGeckoId].usd);"
-        "const tokenAmount = usdReceived / priceUsd;"
+        "const tokenAmount = totalUsd / priceUsd;"
         "const multiplier = paymentTokenSymbol.toUpperCase() === 'USDC' ? 1e6 : 1e18;"
         "const tokenAmountInt = Math.round(tokenAmount * multiplier * 0.9);"
         "return Functions.encodeUint256(tokenAmountInt);";
 
-    // Callback gas limit
     uint32 gasLimit = 300000;
 
     // donID - Hardcoded for Avalanche Fuji
