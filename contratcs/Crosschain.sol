@@ -11,16 +11,17 @@ import "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.sol";
 contract CrossChainSender is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    IRouterClient public ccipRouter;
+    IRouterClient public immutable ccipRouter;
     mapping(address => bool) public supportedTokens;
     uint64 public destinationChainSelector;
     address public destinationContract;
     address public constant LINK = 0x779877A7B0D9E8603169DdbD7836e478b4624789;
     address public constant USDC = 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238;
-    address public constant WETH = 0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9;
+    address public constant WETH = 0xD96b1bf0432A11f57fc0A1FcE5ae3e74A8C5829a;
 
     event CrossChainMintInitiated(bytes32 indexed messageId, address indexed user, address token, uint256 amount, string symbol);
     event CrossChainRefundReceived(bytes32 indexed messageId, address indexed user, address token, uint256 amount);
+    event DestinationChainUpdated(uint64 newChainSelector, address newDestinationContract);
 
     constructor(
         address _ccipRouter,
@@ -42,14 +43,13 @@ contract CrossChainSender is Ownable, ReentrancyGuard {
         string calldata symbol,
         address paymentToken,
         uint256 amount
-    ) external nonReentrant {
+    ) external nonReentrant returns (bytes32) {
         require(supportedTokens[paymentToken], "Unsupported payment token");
         require(amount > 0, "Amount must be greater than 0");
-
         require(IERC20(paymentToken).balanceOf(msg.sender) >= amount, "Insufficient token balance");
         require(IERC20(paymentToken).allowance(msg.sender, address(this)) >= amount, "Insufficient token allowance");
-
         IERC20(paymentToken).safeTransferFrom(msg.sender, address(this), amount);
+        IERC20(paymentToken).approve(address(ccipRouter), amount);
 
         Client.EVMTokenAmount[] memory tokenAmounts = new Client.EVMTokenAmount[](1);
         tokenAmounts[0] = Client.EVMTokenAmount({
@@ -61,20 +61,17 @@ contract CrossChainSender is Ownable, ReentrancyGuard {
             receiver: abi.encode(destinationContract),
             data: abi.encode(msg.sender, paymentToken, amount, symbol),
             tokenAmounts: tokenAmounts,
-            extraArgs: Client._argsToBytes(Client.EVMExtraArgsV1({gasLimit: 200_000})),
+            extraArgs: Client._argsToBytes(Client.EVMExtraArgsV1({gasLimit: 500_000})),
             feeToken: LINK
         });
-
         uint256 fees = ccipRouter.getFee(destinationChainSelector, message);
         require(IERC20(LINK).balanceOf(msg.sender) >= fees, "Insufficient LINK for CCIP fees");
+        require(IERC20(LINK).allowance(msg.sender, address(this)) >= fees, "Insufficient LINK allowance");
         IERC20(LINK).safeTransferFrom(msg.sender, address(this), fees);
-        IERC20(address(this)).approve(address(ccipRouter), fees);
-
-
-
+        IERC20(LINK).approve(address(ccipRouter), fees);
         bytes32 messageId = ccipRouter.ccipSend(destinationChainSelector, message);
-
         emit CrossChainMintInitiated(messageId, msg.sender, paymentToken, amount, symbol);
+        return messageId;
     }
 
     function receiveCrossChainRefund(
@@ -82,6 +79,7 @@ contract CrossChainSender is Ownable, ReentrancyGuard {
         address token,
         uint256 amount
     ) external nonReentrant {
+        require(msg.sender == destinationContract, "Only destination contract can call");
         require(supportedTokens[token], "Unsupported token");
         require(IERC20(token).balanceOf(address(this)) >= amount, "Insufficient token balance");
 
@@ -96,6 +94,7 @@ contract CrossChainSender is Ownable, ReentrancyGuard {
         require(_destinationContract != address(0), "Invalid destination contract");
         destinationChainSelector = _destinationChainSelector;
         destinationContract = _destinationContract;
+        emit DestinationChainUpdated(_destinationChainSelector, _destinationContract);
     }
 
     function withdrawTokens(address token, uint256 amount) external onlyOwner {
