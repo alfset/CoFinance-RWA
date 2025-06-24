@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import "./interfaces/IFunctionsConsumer.sol";
+import "./interface/IFunctionsConsumer.sol";
 import "./interfaces/IAssetToken.sol";
-import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v4.9.0/contracts/token/ERC20/IERC20.sol";
-import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v4.9.0/contracts/token/ERC20/utils/SafeERC20.sol";
-import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v4.9.0/contracts/security/ReentrancyGuard.sol";
-import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v4.9.0/contracts/access/Ownable.sol";
-import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
-import {Client} from "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.sol";
-import {LinkTokenInterface} from "@chainlink/contracts/src/v0.8/shared/interfaces/LinkTokenInterface.sol";
-import {CCIPReceiver} from "@chainlink/contracts-ccip/src/v0.8/ccip/applications/CCIPReceiver.sol";
+import "@openzeppelin/contracts@4.9.0/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts@4.9.0/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts@4.9.0/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts@4.9.0/access/Ownable.sol";
+import "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
+import "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.sol";
+import "@chainlink/contracts/src/v0.8/shared/interfaces/LinkTokenInterface.sol";
+import "@chainlink/contracts-ccip/src/v0.8/ccip/applications/CCIPReceiver.sol";
+
 contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
     using SafeERC20 for IERC20;
 
@@ -20,10 +21,11 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
     IRouterClient public ccipRouter;
     LinkTokenInterface public linkToken;
 
-    mapping(address => bool) public supportedTokens;
+    mapping(string => address) internal symbolToToken;
     mapping(address => uint256) public tokenDecimals;
     mapping(uint64 => bool) public supportedDestinationChains;
     mapping(uint64 => bool) public supportedSourceChains;
+    mapping(uint64 => mapping(string => address)) internal sourceChainTokenToAddress;
     uint256 public constant REQUEST_TIMEOUT = 5 minutes;
 
     struct Request {
@@ -34,9 +36,11 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
         bool fulfilled;
         uint256 timestamp;
         bytes32 consumerRequestId;
+        bytes32 dataMessageId;
     }
     mapping(bytes32 => Request) public requests;
     mapping(bytes32 => bool) public consumerResultsReceived;
+    mapping(bytes32 => uint256) public tokenMessageBalances;
 
     event MintRequestInitiated(bytes32 indexed requestId, address indexed user, address paymentToken, uint256 amount);
     event BurnRequestInitiated(bytes32 indexed requestId, address indexed user, uint256 amount, address paymentToken);
@@ -47,22 +51,24 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
     event ConsumerResultReceived(bytes32 indexed requestId, uint256 result);
     event ProcessResultAttempted(bytes32 indexed requestId, bool isMint, bool success);
     event TokensBridged(bytes32 indexed messageId, uint64 indexed destinationChainSelector, address receiver, uint256 amount);
-    event CrossChainMintTriggered(bytes32 indexed messageId, uint64 indexed sourceChainSelector, address receiver, uint256 amount, address paymentToken);
+    event CrossChainDataReceived(bytes32 indexed messageId, address indexed user, string symbolForPayment, uint256 amount, string symbolToMint);
+    event CrossChainTokensReceived(bytes32 indexed messageId, bytes32 indexed dataMessageId, address token, uint256 amount);
+    event DebugTokenMismatch(uint64 sourceChainSelector, string tokenSymbol, address receivedToken, address expectedToken);
 
     uint64 public subscriptionId;
 
-    address public constant USDC = 0xc4BEc34199421c26AeB08e15Ca29E97b65dFC757;
+    address public constant USDC = 0xC231246DB86C897B1A8DaB35bA2A834F4bC6191c;
     address public constant WETH = 0x11452c1b9fF5AA9169CEd6511cd7683c2cdCeC85;
     address public constant WAVAX = 0xd00ae08403B9bbb9124bB305C09058E32C39A48c;
     address public constant LINK = 0x0b9d5D9136855f6FEc3c0993feE6E9CE8a297846;
 
     constructor(
-    address _mintConsumer,
-    address _burnConsumer,
-    uint64 _subscriptionId,
-    address _assetToken,
-    address _ccipRouter,
-    address _linkToken
+        address _mintConsumer,
+        address _burnConsumer,
+        uint64 _subscriptionId,
+        address _assetToken,
+        address _ccipRouter,
+        address _linkToken
     ) Ownable() CCIPReceiver(_ccipRouter) {
         require(_mintConsumer != address(0), "Invalid mint consumer address");
         require(_burnConsumer != address(0), "Invalid burn consumer address");
@@ -77,10 +83,10 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
         ccipRouter = IRouterClient(_ccipRouter);
         linkToken = LinkTokenInterface(_linkToken);
 
-        supportedTokens[USDC] = true;
-        supportedTokens[WETH] = true;
-        supportedTokens[WAVAX] = true;
-        supportedTokens[LINK] = true;
+        symbolToToken["USDC"] = USDC;
+        symbolToToken["WETH"] = WETH;
+        symbolToToken["WAVAX"] = WAVAX;
+        symbolToToken["LINK"] = LINK;
 
         tokenDecimals[USDC] = 6;
         tokenDecimals[WETH] = 18;
@@ -88,44 +94,57 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
         tokenDecimals[LINK] = 18;
     }
 
-
     function _ccipReceive(Client.Any2EVMMessage memory message) internal override {
         require(supportedSourceChains[message.sourceChainSelector], "Unsupported source chain");
-        require(message.destTokenAmounts[0].token == WETH, "Expected WETH token");
 
-        (address receiver, address paymentToken, uint256 amount, string memory symbol) = abi.decode(message.data, (address, address, uint256, string));
+        if (message.destTokenAmounts.length == 0) {
+            (address receiver, string memory symbolForPayment, uint256 amount, string memory symbolToMint) = abi.decode(message.data, (address, string, uint256, string));
+            require(receiver != address(0), "Invalid receiver address");
+            require(amount > 0, "Invalid amount");
+            address localPaymentToken = symbolToToken[symbolForPayment];
+            require(localPaymentToken != address(0), "Unsupported payment token");
 
-        require(supportedTokens[paymentToken], "Unsupported payment token");
-        require(receiver != address(0), "Invalid receiver address");
-        require(amount > 0, "Invalid amount");
-        require(message.destTokenAmounts[0].token == paymentToken, "Token mismatch");
-        require(message.destTokenAmounts[0].amount == amount, "Amount mismatch");
-        string[] memory args = new string[](3);
-        args[0] = symbol;
-        args[1] = _getTokenSymbol(WETH);
-        args[2] = _toString(amount);
+            string[] memory args = new string[](3);
+            args[0] = symbolToMint;
+            args[1] = symbolForPayment;
+            args[2] = _toString(amount);
 
-        bytes32 requestId = mintConsumer.sendRequest(subscriptionId, args);
+            bytes32 requestId = mintConsumer.sendRequest(subscriptionId, args);
 
-        requests[requestId] = Request({
-            user: receiver,
-            paymentToken: WETH,
-            amount: amount,
-            isMint: true,
-            fulfilled: false,
-            timestamp: block.timestamp,
-            consumerRequestId: requestId
-        });
+            requests[requestId] = Request({
+                user: receiver,
+                paymentToken: localPaymentToken,
+                amount: amount,
+                isMint: true,
+                fulfilled: false,
+                timestamp: block.timestamp,
+                consumerRequestId: requestId,
+                dataMessageId: message.messageId
+            });
 
-        emit CrossChainMintTriggered(message.messageId, message.sourceChainSelector, receiver, amount, WETH);
+            emit CrossChainDataReceived(message.messageId, receiver, symbolForPayment, amount, symbolToMint);
+        } else {
+            bytes32 dataMessageId = abi.decode(message.data, (bytes32));
+            require(message.destTokenAmounts[0].amount > 0, "Invalid token amount");
+            address receivedToken = message.destTokenAmounts[0].token;
+            string memory tokenSymbol = _getTokenSymbol(receivedToken);
+            address expectedSourceToken = sourceChainTokenToAddress[message.sourceChainSelector][tokenSymbol];
+            emit DebugTokenMismatch(message.sourceChainSelector, tokenSymbol, receivedToken, expectedSourceToken);
+            require(expectedSourceToken != address(0), "Unsupported token");
+            require(receivedToken == expectedSourceToken, "Token address mismatch");
+
+            tokenMessageBalances[dataMessageId] += message.destTokenAmounts[0].amount;
+            emit CrossChainTokensReceived(message.messageId, dataMessageId, receivedToken, message.destTokenAmounts[0].amount);
+        }
     }
 
     function initiateMint(
-        string calldata symbol,
-        address paymentToken,
+        string calldata symbolToMint,
+        string calldata symbolForPayment,
         uint256 amount
     ) external nonReentrant {
-        require(supportedTokens[paymentToken], "Unsupported payment token");
+        address paymentToken = symbolToToken[symbolForPayment];
+        require(paymentToken != address(0), "Unsupported payment token");
         require(amount > 0, "Amount must be greater than 0");
         require(IERC20(paymentToken).balanceOf(msg.sender) >= amount, "Insufficient token balance");
         require(IERC20(paymentToken).allowance(msg.sender, address(this)) >= amount, "Insufficient token allowance");
@@ -135,8 +154,8 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
         require(IERC20(paymentToken).balanceOf(address(this)) == balanceBefore + amount, "Token transfer failed");
 
         string[] memory args = new string[](3);
-        args[0] = symbol;
-        args[1] = _getTokenSymbol(paymentToken);
+        args[0] = symbolToMint;
+        args[1] = symbolForPayment;
         args[2] = _toString(amount);
 
         bytes32 requestId = mintConsumer.sendRequest(subscriptionId, args);
@@ -148,18 +167,20 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
             isMint: true,
             fulfilled: false,
             timestamp: block.timestamp,
-            consumerRequestId: requestId
+            consumerRequestId: requestId,
+            dataMessageId: bytes32(0)
         });
 
         emit MintRequestInitiated(requestId, msg.sender, paymentToken, amount);
     }
 
     function initiateBurn(
-        string calldata symbol,
-        address paymentToken,
+        string calldata symbolToMint,
+        string calldata symbolForPayment,
         uint256 amount
     ) external nonReentrant {
-        require(supportedTokens[paymentToken], "Unsupported payment token");
+        address paymentToken = symbolToToken[symbolForPayment];
+        require(paymentToken != address(0), "Unsupported payment token");
         require(amount > 0, "Amount must be greater than 0");
         require(assetToken.balanceOf(msg.sender) >= amount, "Insufficient asset token balance");
         require(assetToken.allowance(msg.sender, address(this)) >= amount, "Insufficient asset token allowance");
@@ -167,8 +188,8 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
         assetToken.burnFrom(msg.sender, amount);
 
         string[] memory args = new string[](3);
-        args[0] = symbol;
-        args[1] = _getTokenSymbol(paymentToken);
+        args[0] = symbolToMint;
+        args[1] = symbolForPayment;
         args[2] = _toString(amount);
 
         bytes32 requestId = burnConsumer.sendRequest(subscriptionId, args);
@@ -179,7 +200,8 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
             isMint: false,
             fulfilled: false,
             timestamp: block.timestamp,
-            consumerRequestId: requestId
+            consumerRequestId: requestId,
+            dataMessageId: bytes32(0)
         });
 
         emit BurnRequestInitiated(requestId, msg.sender, amount, paymentToken);
@@ -193,6 +215,10 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
         require(request.amount > 0, "Invalid request amount");
         require(consumerResultsReceived[request.consumerRequestId], "Consumer result not received");
 
+        if (isMint && request.dataMessageId != bytes32(0)) {
+            require(tokenMessageBalances[request.dataMessageId] >= request.amount, "Insufficient token balance received");
+        }
+
         IFunctionsConsumer consumer = isMint ? mintConsumer : burnConsumer;
         uint256 result = consumer.getResult();
         request.fulfilled = true;
@@ -200,7 +226,9 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
 
         if (isMint) {
             if (result > 0) {
-                require(assetToken.hasRole(assetToken.MINTER_ROLE(), address(this)), "Contract not minter");
+                require(assetToken.hasRole(assetToken.MINTER_ROLE(),
+
+address(this)), "Contract not minter");
                 try assetToken.mint(request.user, result) {
                     emit MintCompleted(requestId, request.user, result);
                 } catch {
@@ -250,7 +278,7 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
     }
 
     function bridgeTokens(
-        uint64 destinationChainSelector,s
+        uint64 destinationChainSelector,
         address receiver,
         uint256 amount
     ) external nonReentrant returns (bytes32 messageId) {
@@ -266,7 +294,7 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
             receiver: abi.encode(receiver),
             data: abi.encode(""),
             tokenAmounts: new Client.EVMTokenAmount[](1),
-            extraArgs: Client._argsToBytes(Client.EVMExtraArgsV1({gasLimit: 200_000})),
+            extraArgs: Client._argsToBytes(Client.EVMExtraArgsV1({gasLimit: 1_000_000})),
             feeToken: address(linkToken)
         });
 
@@ -308,7 +336,7 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
         Request storage request = requests[requestId];
         require(!request.fulfilled, "Request already fulfilled");
         require(block.timestamp >= request.timestamp + REQUEST_TIMEOUT, "Request not timed out");
-        require(msg.sender == request.user, "Not request owner");
+        require(msg.sender == request.user, "Invalid request owner");
 
         request.fulfilled = true;
 
@@ -326,6 +354,15 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
                 revert("Failed to refund asset tokens");
             }
         }
+    }
+
+    function setSourceChainTokenAddress(
+        uint64 chainSelector,
+        string calldata symbol,
+        address tokenAddress
+    ) external onlyOwner {
+        require(tokenAddress != address(0), "Invalid token address");
+        sourceChainTokenToAddress[chainSelector][symbol] = tokenAddress;
     }
 
     function addSupportedSourceChain(uint64 chainSelector) external onlyOwner {
@@ -351,7 +388,7 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
 
     function getMintConsumerResult(bytes32 requestId) external view returns (uint256 result, bool isReceived) {
         Request memory request = requests[requestId];
-        require(request.isMint, "Not a mint request");
+        require(request.isMint, "Invalid mint request");
         isReceived = consumerResultsReceived[request.consumerRequestId];
         if (isReceived) {
             result = mintConsumer.getResult();
@@ -363,7 +400,7 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
 
     function getBurnConsumerResult(bytes32 requestId) external view returns (uint256 result, bool isReceived) {
         Request memory request = requests[requestId];
-        require(!request.isMint, "Not a burn request");
+        require(!request.isMint, "Invalid burn request");
         isReceived = consumerResultsReceived[request.consumerRequestId];
         if (isReceived) {
             result = burnConsumer.getResult();
@@ -387,24 +424,24 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
     }
 
     function _getTokenSymbol(address token) internal pure returns (string memory) {
-        if (token == USDC) return "USDC";
-        if (token == WETH) return "WETH";
-        if (token == WAVAX) return "WAVAX";
-        if (token == LINK) return "LINK";
-        revert("Unknown token");
+        if (token == 0xC231246DB86C897B1A8DaB35bA2A834F4bC6191c) return "USDC";
+        if (token == 0x11452c1b9fF5AA9169CEd6511cd7683c2cdCeC85) return "WETH";
+        if (token == 0xd00ae08403B9bbb9124bB305C09058E32C39A48c) return "WAVAX";
+        if (token == 0x0b9d5D9136855f6FEc3c0993feE6E9CE8a297846) return "LINK";
+        revert("Unknown token address");
     }
 
     function _toString(uint256 value) internal pure returns (string memory) {
         if (value == 0) return "0";
         uint256 temp = value;
         uint256 digits;
-        while (temp != 0) {
+        while (temp > 0) {
             digits++;
             temp /= 10;
         }
         bytes memory buffer = new bytes(digits);
-        while (value != 0) {
-            digits--;
+        while (value > 0) {
+            digits -= 1;
             buffer[digits] = bytes1(uint8(48 + (value % 10)));
             value /= 10;
         }
@@ -421,12 +458,12 @@ contract MintBurnManager is Ownable, ReentrancyGuard, CCIPReceiver {
         burnConsumer = IFunctionsConsumer(newBurnConsumer);
     }
 
-    function updateSubscriptionId(uint64 newSubscriptionId) external onlyOwner {
-        subscriptionId = newSubscriptionId;
+    function updateSubscriptionId(uint64 newId) external onlyOwner {
+        subscriptionId = newId;
     }
 
     function withdrawTokens(address token, uint256 amount) external onlyOwner {
-        require(amount > 0, "Amount must be greater than 0");
+        require(amount > 0, "Invalid amount");
         require(IERC20(token).balanceOf(address(this)) >= amount, "Insufficient token balance");
         IERC20(token).safeTransfer(owner(), amount);
     }
