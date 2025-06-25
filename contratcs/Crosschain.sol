@@ -15,9 +15,9 @@ contract CrossChainSender is Ownable, ReentrancyGuard {
     uint64 public destinationChainSelector;
     address public destinationContract;
 
-    address public constant LINK = 0x779877A7B0D9E8603169DdbD7836e478b4624789; // Sepolia LINK
-    address public constant USDC = 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238; // Sepolia USDC
-    address public constant WETH = 0xD96b1bf0432A11f57fc0A1FcE5ae3e74A8C5829a; // Custom WETH
+    address public constant LINK = 0x779877A7B0D9E8603169DdbD7836e478b4624789; 
+    address public constant USDC = 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238; 
+    address public constant WETH = 0xD96b1bf0432A11f57fc0A1FcE5ae3e74A8C5829a; 
 
     mapping(string => address) public symbolToToken;
 
