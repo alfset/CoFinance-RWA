@@ -1,0 +1,108 @@
+.container {
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.gridContainer {
+  display: flex;
+  flex-direction: row; /* Ensure horizontal layout */
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.chartContainer {
+  height: 600px; /* Fixed height for Alpaca-like chart */
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  overflow: hidden;
+  width: 100%; /* Full width within Grid item */
+}
+
+.formCard {
+  background: #ffffff;
+  padding: 16px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  height: 600px; /* Match chart height */
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  width: 100%; /* Full width within Grid item */
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex-grow: 1;
+}
+
+.button {
+  padding: 10px;
+  font-weight: 600;
+  text-transform: none;
+}
+
+.primaryButton {
+  background-color: #007bff;
+  color: #ffffff;
+}
+
+.primaryButton:hover {
+  background-color: #0056b3;
+}
+
+.secondaryButton {
+  background-color: #6c757d;
+  color: #ffffff;
+}
+
+.secondaryButton:hover {
+  background-color: #5a6268;
+}
+
+.recentTxContainer {
+  margin-top: 20px;
+  background: #ffffff;
+  padding: 16px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.recentTxTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.recentTxTable th,
+.recentTxTable td {
+  padding: 8px;
+  text-align: left;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.recentTxTable th {
+  font-weight: 600;
+}
+
+.recentTxTable a {
+  color: #007bff;
+  text-decoration: none;
+}
+
+.recentTxTable a:hover {
+  text-decoration: underline;
+}
+
+/* Responsive adjustments */
+@media (max-width: 900px) {
+  .gridContainer {
+    flex-direction: column; /* Stack vertically on mobile */
+  }
+  .chartContainer,
+  .formCard {
+    height: 400px; /* Reduced height for mobile */
+    width: 100%;
+  }
+}
