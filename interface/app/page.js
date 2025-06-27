@@ -31,6 +31,26 @@ import {
 } from "../utils/web3";
 import { ethers } from "ethers";
 
+const isMarketOpen = () => {
+  const now = new Date();
+  const etTime = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+    weekday: "short",
+  }).formatToParts(now);
+
+  const day = etTime.find((part) => part.type === "weekday").value;
+  const hour = parseInt(etTime.find((part) => part.type === "hour").value);
+  const minute = parseInt(etTime.find((part) => part.type === "minute").value);
+  const isWeekday = ["Mon", "Tue", "Wed", "Thu", "Fri"].includes(day);
+  const isWithinMarketHours =
+    (hour > 9 || (hour === 9 && minute >= 30)) && hour < 16;
+
+  return isWeekday && isWithinMarketHours;
+};
+
 export default function Home() {
   const [account, setAccount] = useState(null);
   const [symbolToMint, setSymbolToMint] = useState("AAPL");
@@ -90,6 +110,10 @@ export default function Home() {
 
   const handleMint = async () => {
     try {
+      if (!isMarketOpen()) {
+        throw new Error("Market is closed. Trading is only allowed from 9:30 AM to 4:00 PM ET, Monday to Friday.");
+      }
+
       if (!amount || isNaN(amount) || Number(amount) <= 0) {
         throw new Error("Invalid amount");
       }
@@ -146,6 +170,10 @@ export default function Home() {
 
   const handleCrossChainMint = async () => {
     try {
+      if (!isMarketOpen()) {
+        throw new Error("Market is closed. Trading is only allowed from 9:30 AM to 4:00 PM ET, Monday to Friday.");
+      }
+
       if (!amount || isNaN(amount) || Number(amount) <= 0) {
         throw new Error("Invalid amount");
       }
@@ -206,6 +234,10 @@ export default function Home() {
 
   const handleBurn = async () => {
     try {
+      if (!isMarketOpen()) {
+        throw new Error("Market is closed. Trading is only allowed from 9:30 AM to 4:00 PM ET, Monday to Friday.");
+      }
+
       if (!amount || isNaN(amount) || Number(amount) <= 0) {
         throw new Error("Invalid amount");
       }
@@ -265,6 +297,10 @@ export default function Home() {
 
   const handleMintAction = () => {
     try {
+      if (!isMarketOpen()) {
+        throw new Error("Market is closed. Trading is only allowed from 9:30 AM to 4:00 PM ET, Monday to Friday.");
+      }
+
       if (destinationChain === "avalancheFuji") {
         handleMint();
       } else if (destinationChain === "sepolia") {
@@ -337,7 +373,7 @@ export default function Home() {
                 <Button
                   variant="contained"
                   onClick={handleMintAction}
-                  disabled={!account || !amount || !destinationChain || !symbolToMint || !symbolForToken}
+                  disabled={!account || !amount || !destinationChain || !symbolToMint || !symbolForToken || !isMarketOpen()}
                   className={`${styles.button} ${styles.primaryButton}`}
                 >
                   {destinationChain === "avalancheFuji" ? "Buy (Mint)" : "Cross-Chain Mint"}
@@ -345,11 +381,16 @@ export default function Home() {
                 <Button
                   variant="contained"
                   onClick={handleBurn}
-                  disabled={!account || !amount || !symbolToMint || !symbolForToken || destinationChain !== "avalancheFuji"}
+                  disabled={!account || !amount || !symbolToMint || !symbolForToken || destinationChain !== "avalancheFuji" || !isMarketOpen()}
                   className={`${styles.button} ${styles.secondaryButton}`}
                 >
                   Sell (Burn)
                 </Button>
+                {!isMarketOpen() && (
+                  <Typography variant="caption" color="error" sx={{ mt: 1 }}>
+                    Market is closed. Trading is available from 9:30 AM to 4:00 PM ET, Monday to Friday.
+                  </Typography>
+                )}
               </Box>
             </Box>
           </Grid>
