@@ -8,20 +8,27 @@ import {
   Button,
   Box,
   Table,
-  TableBody,
-  TableCell,
   TableContainer,
   TableHead,
   TableRow,
+  TableCell,
+  TableBody,
   Grid,
 } from "@mui/material";
 import styles from "../styles/Home.module.css";
 import Header from "../components/Header";
 import TokenSelector from "../components/TokenSelector";
+import SymbolSelector from "../components/SymbolSelector";
 import ChainSelector from "../components/ChainSelector";
 import TransactionModal from "../components/TransactionModal";
-import { getContract, connectWallet, getTokenDecimals } from "../utils/web3";
-import { chainSelectors } from "../utils/contracts";
+import {
+  getContract,
+  connectWallet,
+  getTokenDecimals,
+  getTokenAddress,
+  checkAndApproveToken,
+  getMintBurnHandler,
+} from "../utils/web3";
 import { ethers } from "ethers";
 
 export default function Home() {
@@ -33,8 +40,15 @@ export default function Home() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalStatus, setModalStatus] = useState("");
   const [txHash, setTxHash] = useState("");
+  const [messageId, setMessageId] = useState("");
   const [qty, setQty] = useState(null);
   const [recentTxs, setRecentTxs] = useState([]);
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    setIsClient(true);
+    setRecentTxs([]);
+  }, []);
 
   useEffect(() => {
     const handleUnhandledRejection = (event) => {
@@ -57,7 +71,8 @@ export default function Home() {
     };
   }, []);
 
-  const addRecentTx = (type, symbol, amount, chain, status, txHash) => {
+  const addRecentTx = (type, symbol, amount, chain, status, txHash, messageId = "") => {
+    if (!isClient) return;
     setRecentTxs((prev) => [
       {
         type,
@@ -66,7 +81,8 @@ export default function Home() {
         chain: chain || "N/A",
         status,
         txHash,
-        timestamp: new Date().toLocaleString(),
+        messageId,
+        timestamp: new Date().toISOString(),
       },
       ...prev.slice(0, 9),
     ]);
@@ -77,42 +93,43 @@ export default function Home() {
       if (!amount || isNaN(amount) || Number(amount) <= 0) {
         throw new Error("Invalid amount");
       }
-      const { signer } = await connectWallet();
-      const contract = getContract("mintBurnManager", signer);
-      const decimals = getTokenDecimals(symbolForToken);
-      const parsedAmount = ethers.utils.parseUnits(amount, decimals);
 
-      setModalStatus("Initiating Mint...");
+      setModalStatus("Please approve token spending in MetaMask...");
       setModalOpen(true);
 
+      const { signer, address } = await connectWallet(destinationChain);
+      if (!signer) {
+        throw new Error(`Failed to initialize signer for ${destinationChain}`);
+      }
+      console.log("Signer Address:", address, "Chain:", destinationChain);
+      setAccount(address);
+
+      const decimals = await getTokenDecimals(destinationChain, symbolForToken);
+      const parsedAmount = ethers.parseUnits(amount, decimals);
+      const contract = await getContract("mintBurnManager", signer, destinationChain);
+      console.log("MintBurnManager Contract:", contract, "Address:", contract?.target);
+
+      if (!contract || !contract.target) {
+        throw new Error(`Invalid contract address for mintBurnManager on ${destinationChain}`);
+      }
+
+      const { address: spenderAddress } = getMintBurnHandler(destinationChain);
+      const tokenAddress = getTokenAddress(destinationChain, symbolForToken);
+      if (!tokenAddress) {
+        throw new Error(`Invalid token address for ${symbolForToken} on ${destinationChain}`);
+      }
+
+      await checkAndApproveToken(tokenAddress, spenderAddress, parsedAmount, signer);
+      setModalStatus("Please sign the mint transaction in MetaMask...");
       const tx = await contract.initiateMint(symbolToMint, symbolForToken, parsedAmount);
       setTxHash(tx.hash);
       setModalStatus("Mint Transaction Submitted");
-      addRecentTx("Mint", symbolToMint, amount, "avalancheFuji", "Submitted", tx.hash);
+      addRecentTx("Mint", symbolToMint, amount, destinationChain, "Submitted", tx.hash);
 
       await tx.wait();
-      setModalStatus("Mint Initiated! Checking Result...");
-
-      const consumerContract = getContract("mintingFunctionsConsumer", signer);
-      let attempts = 0;
-      while (attempts < 10) {
-        const [requestId, , , lastQty] = await consumerContract.getLastResponse().catch((error) => {
-          throw new Error(`Failed to get last response: ${error.message}`);
-        });
-        if (lastQty > 0) {
-          const mintedQty = ethers.utils.formatUnits(lastQty, 18);
-          setQty(mintedQty);
-          setModalStatus(`Mint Successful! Quantity: ${mintedQty}`);
-          addRecentTx("Mint", symbolToMint, amount, "avalancheFuji", "Successful", tx.hash);
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-        attempts++;
-      }
-      if (attempts === 10) {
-        setModalStatus("Mint Initiated, but no result received yet.");
-        addRecentTx("Mint", symbolToMint, amount, "avalancheFuji", "Pending Result", tx.hash);
-      }
+      setModalStatus("Mint Successful!");
+      setQty(amount);
+      addRecentTx("Mint", symbolToMint, amount, destinationChain, "Successful", tx.hash);
     } catch (error) {
       console.error("Mint error:", {
         message: error.message,
@@ -123,7 +140,7 @@ export default function Home() {
       });
       const errorMessage = error.reason || error.message || "Failed to initiate mint";
       setModalStatus(`Error: ${errorMessage}`);
-      addRecentTx("Mint", symbolToMint, amount, "avalancheFuji", `Error: ${errorMessage}`, "");
+      addRecentTx("Mint", symbolToMint, amount, destinationChain, `Error: ${errorMessage}`, txHash || "");
     }
   };
 
@@ -132,42 +149,47 @@ export default function Home() {
       if (!amount || isNaN(amount) || Number(amount) <= 0) {
         throw new Error("Invalid amount");
       }
-      const { signer } = await connectWallet();
-      const contract = getContract("crossChainSender", signer);
-      const decimals = getTokenDecimals(symbolForToken);
-      const parsedAmount = ethers.utils.parseUnits(amount, decimals);
 
-      setModalStatus("Initiating Cross-Chain Mint...");
+      setModalStatus("Please approve token spending in MetaMask...");
       setModalOpen(true);
 
+      const { signer, address } = await connectWallet(destinationChain);
+      if (!signer) {
+        throw new Error(`Failed to initialize signer for ${destinationChain}`);
+      }
+      console.log("Signer Address:", address, "Chain:", destinationChain);
+      setAccount(address);
+
+      const decimals = await getTokenDecimals(destinationChain, symbolForToken);
+      const parsedAmount = ethers.parseUnits(amount, decimals);
+      const contract = await getContract("crossChainSender", signer, destinationChain);
+      console.log("CrossChainSender Contract:", contract, "Address:", contract?.target);
+      if (!contract || !contract.target) {
+        throw new Error(`Invalid contract address for crossChainSender on ${destinationChain}`);
+      }
+
+      const { address: spenderAddress } = getMintBurnHandler(destinationChain);
+      const tokenAddress = getTokenAddress(destinationChain, symbolForToken);
+      if (!tokenAddress) {
+        throw new Error(`Invalid token address for ${symbolForToken} on ${destinationChain}`);
+      }
+
+      await checkAndApproveToken(tokenAddress, spenderAddress, parsedAmount, signer);
+      setModalStatus("Please sign the cross-chain mint transaction in MetaMask...");
       const tx = await contract.initiateCrossChainMint(symbolToMint, symbolForToken, parsedAmount);
+      const messageId = tx; 
       setTxHash(tx.hash);
+      setMessageId(messageId);
       setModalStatus("Cross-Chain Transaction Submitted");
-      addRecentTx("Cross-Chain Mint", symbolToMint, amount, destinationChain, "Submitted", tx.hash);
+      addRecentTx("Cross-Chain Mint", symbolToMint, amount, destinationChain, "Submitted", tx.hash, messageId);
 
       await tx.wait();
-      setModalStatus("Cross-Chain Mint Initiated! Checking Result...");
+      setModalStatus("Waiting for Finality...");
+      addRecentTx("Cross-Chain Mint", symbolToMint, amount, destinationChain, "Waiting for Finality", tx.hash, messageId);
 
-      const consumerContract = getContract("mintingFunctionsConsumer", signer);
-      let attempts = 0;
-      while (attempts < 10) {
-        const [requestId, , , lastQty] = await consumerContract.getLastResponse().catch((error) => {
-          throw new Error(`Failed to get last response: ${error.message}`);
-        });
-        if (lastQty > 0) {
-          const mintedQty = ethers.utils.formatUnits(lastQty, 18);
-          setQty(mintedQty);
-          setModalStatus(`Cross-Chain Mint Successful! Quantity: ${mintedQty}`);
-          addRecentTx("Cross-Chain Mint", symbolToMint, amount, destinationChain, "Successful", tx.hash);
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-        attempts++;
-      }
-      if (attempts === 10) {
-        setModalStatus("Cross-Chain Mint Initiated, but no result received yet.");
-        addRecentTx("Cross-Chain Mint", symbolToMint, amount, destinationChain, "Pending Result", tx.hash);
-      }
+      setModalStatus("Cross-Chain Mint Successful!");
+      setQty(amount);
+      addRecentTx("Cross-Chain Mint", symbolToMint, amount, destinationChain, "Successful", tx.hash, messageId);
     } catch (error) {
       console.error("Cross-Chain Mint error:", {
         message: error.message,
@@ -178,7 +200,7 @@ export default function Home() {
       });
       const errorMessage = error.reason || error.message || "Failed to initiate cross-chain mint";
       setModalStatus(`Error: ${errorMessage}`);
-      addRecentTx("Cross-Chain Mint", symbolToMint, amount, destinationChain, `Error: ${errorMessage}`, "");
+      addRecentTx("Cross-Chain Mint", symbolToMint, amount, destinationChain, `Error: ${errorMessage}`, txHash || "", messageId || "");
     }
   };
 
@@ -187,23 +209,46 @@ export default function Home() {
       if (!amount || isNaN(amount) || Number(amount) <= 0) {
         throw new Error("Invalid amount");
       }
-      const { signer } = await connectWallet();
-      const contract = getContract("mintBurnManager", signer);
-      const decimals = getTokenDecimals(symbolForToken);
-      const parsedAmount = ethers.utils.parseUnits(amount, decimals);
 
-      setModalStatus("Initiating Burn...");
+      if (destinationChain !== "avalancheFuji") {
+        throw new Error("Burn operation is only supported on Avalanche Fuji");
+      }
+
+      setModalStatus("Please approve token spending in MetaMask...");
       setModalOpen(true);
 
+      const { signer, address } = await connectWallet(destinationChain);
+      if (!signer) {
+        throw new Error(`Failed to initialize signer for ${destinationChain}`);
+      }
+      console.log("Signer Address:", address, "Chain:", destinationChain);
+      setAccount(address);
+
+      const decimals = await getTokenDecimals(destinationChain, symbolForToken);
+      const parsedAmount = ethers.parseUnits(amount, decimals);
+      const contract = await getContract("mintBurnManager", signer, destinationChain);
+      console.log("MintBurnManager Contract:", contract, "Address:", contract?.target);
+      if (!contract || !contract.target) {
+        throw new Error(`Invalid contract address for mintBurnManager on ${destinationChain}`);
+      }
+
+      const { address: spenderAddress } = getMintBurnHandler(destinationChain);
+      const tokenAddress = getTokenAddress(destinationChain, symbolForToken);
+      if (!tokenAddress) {
+        throw new Error(`Invalid token address for ${symbolForToken} on ${destinationChain}`);
+      }
+
+      await checkAndApproveToken(tokenAddress, spenderAddress, parsedAmount, signer);
+      setModalStatus("Please sign the burn transaction in MetaMask...");
       const tx = await contract.initiateBurn(symbolToMint, symbolForToken, parsedAmount);
       setTxHash(tx.hash);
       setModalStatus("Burn Transaction Submitted");
-      addRecentTx("Burn", symbolToMint, amount, "avalancheFuji", "Submitted", tx.hash);
+      addRecentTx("Burn", symbolToMint, amount, destinationChain, "Submitted", tx.hash);
 
       await tx.wait();
       setModalStatus("Burn Initiated Successfully!");
       setQty(null);
-      addRecentTx("Burn", symbolToMint, amount, "avalancheFuji", "Successful", tx.hash);
+      addRecentTx("Burn", symbolToMint, amount, destinationChain, "Successful", tx.hash);
     } catch (error) {
       console.error("Burn error:", {
         message: error.message,
@@ -214,7 +259,7 @@ export default function Home() {
       });
       const errorMessage = error.reason || error.message || "Failed to initiate burn";
       setModalStatus(`Error: ${errorMessage}`);
-      addRecentTx("Burn", symbolToMint, amount, "avalancheFuji", `Error: ${errorMessage}`, "");
+      addRecentTx("Burn", symbolToMint, amount, destinationChain, `Error: ${errorMessage}`, txHash || "");
     }
   };
 
@@ -241,19 +286,25 @@ export default function Home() {
     }
   };
 
+  if (!isClient) {
+    return null;
+  }
+
   return (
     <div>
       <Header setAccount={setAccount} />
       <Container className={styles.container}>
         <Grid container spacing={2}>
           <Grid item xs={12} md={8} order={{ xs: 1 }}>
-            <Box className={styles.chartContainer}>
-              <iframe
-                src={`https://s.tradingview.com/widgetembed/?frameElementId=tradingview_widget&symbol=${symbolToMint}&interval=1&symboledit=0&saveimage=0&toolbarbg=f1f3f0&studies=[]&theme=light&style=1&timezone=Etc%2FUTC&studies_overrides={}&locale=en&utm_source=www.example.com&utm_medium=widget&utm_campaign=chart&utm_term=${symbolToMint}`}
-                style={{ width: "100%", height: "100%", border: "none" }}
-                title="TradingView Chart"
-              ></iframe>
-            </Box>
+            {isClient && (
+              <Box className={styles.chartContainer}>
+                <iframe
+                  src={`https://s.tradingview.com/widgetembed/?frameElementId=tradingview_widget&symbol=${symbolToMint}&interval=1&symboledit=0&saveimage=0&toolbarbg=f1f3f0&studies=[]&theme=light&style=1&timezone=Etc%2FUTC&studies_overrides={}&locale=en&utm_source=www.example.com&utm_medium=widget&utm_campaign=chart&utm_term=${symbolToMint}`}
+                  style={{ width: "100%", height: "100%", border: "none" }}
+                  title="TradingView Chart"
+                ></iframe>
+              </Box>
+            )}
           </Grid>
           <Grid item xs={12} md={4} order={{ xs: 2 }}>
             <Box className={styles.formCard}>
@@ -261,16 +312,16 @@ export default function Home() {
                 Place Order
               </Typography>
               <Box className={styles.form}>
-                <TokenSelector
+                <SymbolSelector
                   label="Symbol"
                   value={symbolToMint}
                   onChange={(e) => setSymbolToMint(e.target.value)}
-                  isSymbol
                 />
                 <TokenSelector
                   label="Payment Token"
                   value={symbolForToken}
                   onChange={(e) => setSymbolForToken(e.target.value)}
+                  chain={destinationChain}
                 />
                 <TextField
                   label="Amount"
@@ -286,7 +337,7 @@ export default function Home() {
                 <Button
                   variant="contained"
                   onClick={handleMintAction}
-                  disabled={!account || !amount || !destinationChain}
+                  disabled={!account || !amount || !destinationChain || !symbolToMint || !symbolForToken}
                   className={`${styles.button} ${styles.primaryButton}`}
                 >
                   {destinationChain === "avalancheFuji" ? "Buy (Mint)" : "Cross-Chain Mint"}
@@ -294,7 +345,7 @@ export default function Home() {
                 <Button
                   variant="contained"
                   onClick={handleBurn}
-                  disabled={!account || !amount}
+                  disabled={!account || !amount || !symbolToMint || !symbolForToken || destinationChain !== "avalancheFuji"}
                   className={`${styles.button} ${styles.secondaryButton}`}
                 >
                   Sell (Burn)
@@ -316,7 +367,7 @@ export default function Home() {
                   <TableCell>Amount</TableCell>
                   <TableCell>Chain</TableCell>
                   <TableCell>Status</TableCell>
-                  <TableCell>Tx Hash</TableCell>
+                  <TableCell>Tx Hash / Message ID</TableCell>
                   <TableCell>Timestamp</TableCell>
                 </TableRow>
               </TableHead>
@@ -329,17 +380,33 @@ export default function Home() {
                     <TableCell>{tx.chain}</TableCell>
                     <TableCell>{tx.status}</TableCell>
                     <TableCell>
-                      {tx.txHash ? (
+                      {tx.type === "Cross-Chain Mint" && tx.messageId ? (
                         <a
-                          href={`https://testnet.snowtrace.io/tx/${tx.txHash}`}
+                          href={`https://ccip.chain.link/msg/${tx.messageId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {tx.messageId.slice(0, 6)}...{tx.messageId.slice(-4)}
+                        </a>
+                      ) : tx.txHash ? (
+                        <a
+                          href={
+                            tx.chain === "avalancheFuji"
+                              ? `https://testnet.snowtrace.io/tx/${tx.txHash}`
+                              : `https://sepolia.etherscan.io/tx/${tx.txHash}`
+                          }
                           target="_blank"
                           rel="noopener noreferrer"
                         >
                           {tx.txHash.slice(0, 6)}...{tx.txHash.slice(-4)}
                         </a>
-                      ) : "N/A"}
+                      ) : (
+                        "N/A"
+                      )}
                     </TableCell>
-                    <TableCell>{tx.timestamp}</TableCell>
+                    <TableCell>
+                      {tx.timestamp ? new Date(tx.timestamp).toLocaleString("en-US", { timeZone: "UTC" }) : "N/A"}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -351,6 +418,7 @@ export default function Home() {
           onClose={() => setModalOpen(false)}
           status={modalStatus}
           txHash={txHash}
+          messageId={messageId}
           qty={qty}
         />
       </Container>

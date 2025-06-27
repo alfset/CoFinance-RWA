@@ -1,9 +1,8 @@
 import React from 'react';
 import { Select, MenuItem, InputLabel, FormControl } from '@mui/material';
-import { tokenAddresses } from '../utils/contracts';
 
-const TokenSelector = ({ label, value, onChange, chain = 'sepolia' }) => {
-  const options = Object.keys(tokenAddresses[chain] || {});
+const SymbolSelector = ({ label, value, onChange }) => {
+  const options = ["AAPL", "GOOG", "AMZN", "TSLA"];
 
   return (
     <FormControl fullWidth margin="normal">
@@ -11,22 +10,21 @@ const TokenSelector = ({ label, value, onChange, chain = 'sepolia' }) => {
       <Select
         value={value || ''}
         onChange={onChange}
+        disabled={options.length === 0}
         label={label}
       >
         {options.length > 0 ? (
-          options.map((token) => (
-            <MenuItem key={token} value={token}>
-              {token}
+          options.map((option) => (
+            <MenuItem key={option} value={option}>
+              {option}
             </MenuItem>
           ))
         ) : (
-          <MenuItem value="" disabled>
-            No tokens available
-          </MenuItem>
+          <MenuItem disabled>No symbols available</MenuItem>
         )}
       </Select>
     </FormControl>
   );
 };
 
-export default TokenSelector;
+export default SymbolSelector;
