@@ -1,99 +1,101 @@
-# CoFi RWA
+# CoFi RWA - Decentralized Real-World Asset Trading Platform
 
-The **CoFi RWA** is a decentralized trading platform built on Ethereum (Sepolia) and Avalanche Fuji testnets, designed to simplify and secure the process of buying and selling tokenized real-world assets (RWAs) like stocks or commodities. By abstracting blockchain complexities and enabling cross-chain functionality, it makes investing in tokenized assets accessible, efficient, and safe, especially for users unfamiliar with decentralized finance (DeFi).
+**CoFi RWA** is a decentralized trading platform built on Ethereum (Sepolia) and Avalanche Fuji testnets, designed to simplify and secure the buying and selling of tokenized real-world assets (RWAs) such as stocks or commodities. By abstracting blockchain complexities and enabling cross-chain functionality, CoFi RWA makes decentralized finance (DeFi) accessible, efficient, and secure for both technical and non-technical users. The platform leverages **Chainlink Functions** for real-time market status and Proof of Reserve, **Chainlink Automation** for automated workflows, and **Chainlink CCIP** for cross-chain operations, ensuring transparency, reliability, and trust.
 
-
+## Table of Contents
+- [Overview](#overview)
+- [Features](#features)
+- [Problems Solved](#problems-solved)
+- [Technology Stack](#technology-stack)
+- [Smart Contracts](#smart-contracts)
+- [Chainlink Integration](#chainlink-integration)
+  - [Chainlink Functions](#chainlink-functions)
+  - [Chainlink Automation](#chainlink-automation)
+  - [Chainlink CCIP](#chainlink-ccip)
+- [Proof of Reserve](#proof-of-reserve)
+- [Application Flow](#application-flow)
 
 ## Overview
-CoFi RWA Minter empowers users to:
-- **Buy** tokenized assets (e.g., AAPL) using stablecoins (e.g., USDC, WETH, LINK) on Avalanche Fuji or via cross-chain buying from Sepolia.
-- **Sell** tokens to redeem underlying assets on Avalanche Fuji, ensuring trust and transparency.
-- **Interact** with blockchain contracts through a simple, user-friendly interface — no deep technical knowledge required.
-- **Safely manage** wallet connections and transactions with robust error handling.
-- **Track** transaction statuses and histories in real-time, reducing uncertainty.
-- **View** real-time market data via TradingView charts.
-- **Trade within market hours** (9:30 AM to 4:00 PM ET, Monday to Friday) using Chainlink Functions to enforce compliance with traditional financial market standards.
+CoFi RWA enables users to trade tokenized real-world assets (e.g., AAPL, commodities) using stablecoins (e.g., USDC, WETH, LINK) on Avalanche Fuji or via cross-chain transactions from Sepolia. The platform offers an intuitive interface, robust security, and real-time transparency. It integrates **Chainlink Functions** to fetch market status and verify asset backing, **Chainlink Automation** to manage liquidity and transaction finalization, and **Chainlink CCIP** for seamless cross-chain operations. With MetaMask for wallet connectivity and TradingView for market data, CoFi RWA bridges traditional finance and DeFi.
 
-The application integrates with MetaMask for wallet connectivity, uses Ethers.js for blockchain interactions, leverages Chainlink Functions for market status and liquidity checks, and employs Material-UI for a responsive user interface.
+## Features
+- **Buy/Sell Tokenized Assets**: Trade tokenized RWAs on Avalanche Fuji or cross-chain from Sepolia using stablecoins.
+- **User-Friendly Interface**: Simplified UI with MetaMask integration for seamless wallet connectivity.
+- **Real-Time Market Data**: Embedded TradingView widget for live price charts.
+- **Market Hour Restrictions**: Trading restricted to U.S. market hours (9:30 AM–4:00 PM ET, Mon–Fri) using Chainlink Functions.
+- **Cross-Chain Functionality**: Buy assets across Sepolia and Avalanche Fuji via Chainlink CCIP.
+- **Transaction Tracking**: Real-time status updates and history with links to Snowtrace, Etherscan, and CCIP explorers.
+- **Proof of Reserve**: Verifies that minted tokens are fully backed by assets in a custody account using Chainlink Functions.
+- **Third-Party Integration**: Modular functions for verified third-party access to buy/sell operations.
+- **Security**: Robust error handling and user guidance to minimize transaction failures.
 
-## Problems It Solves
-CoFi RWA Minter addresses key challenges in RWA tokenization:
-1. **Complexity of Tokenization**: Simplifies multi-step processes into a seamless UI, enabling buying and selling without technical expertise.
-2. **Centralized Intermediaries**: Eliminates reliance on brokers or custodians using decentralized smart contracts for trustless operations.
-3. **Accessibility Barriers**: Offers an intuitive interface with MetaMask integration, making DeFi accessible to non-technical users.
-4. **Cross-Chain Limitations**: Supports buying across Sepolia and Avalanche Fuji via Chainlink CCIP, enhancing flexibility.
-5. **Lack of Transparency**: Provides real-time transaction tracking and history, with links to blockchain explorers (Snowtrace, Etherscan, CCIP) for verification.
-6. **Market Timing**: Restricts trading to U.S. market hours (9:30 AM–4:00 PM ET, Mon–Fri) using Chainlink Functions, ensuring compliance and pricing reliability.
-7. **Security Risks**: Implements robust error handling and user guidance to minimize transaction failures and enhance security.
-
-## Challenges and Solutions
-During development, the following challenges were encountered, with solutions implemented to ensure a robust platform:
-
-1. **Cross-Chain Buying and Chainlink Automation Limitations**  
-   **Context**: Cross-chain buying relies on Chainlink CCIP for messaging between Sepolia and Avalanche Fuji, with Chainlink Automation handling off-chain processes, introducing delays and potential inconsistencies.  
-   **Challenge**: Delays in Chainlink Automation or network messaging latency can cause pending or failed transaction confirmations, leading to user uncertainty 
-
-2. **User Experience Around Async Cross-Chain Transactions**  
-   **Context**: Cross-chain workflows involve multiple steps and delayed finality due to Chainlink CCIP and automation processes.  
-   **Challenge**: Ensuring users understand that buy/sell actions may take time and that errors may stem from external services like Chainlink.  
-   **Solution**: Added detailed modal messages explaining each transaction step and potential delays. Integrated a transaction history table (`Recent Transactions`) to track status updates, improving user confidence and clarity.
-
-3. **Market Status Restrictions**  
-   **Context**: Buying and selling should be restricted to U.S. market hours (9:30 AM–4:00 PM ET, Mon–Fri) to align with traditional markets.  
-   **Challenge**: Accurately determining market status in a decentralized manner.  
-   **Solution**: Implemented a Chainlink Functions-based handler to fetch real-time market status from an external API (e.g., Alpha Vantage), restricting buy/sell actions when the market is closed. The UI displays a clear error message when transactions are attempted outside market hours.
-
-4. **Liquidity Provisioning**  
-   **Context**: Sufficient liquidity in the custody account is required to facilitate buying.  
-   **Challenge**: Ensuring the custody account has enough tokens (e.g., USDC) to cover buy transactions.  
-   **Solution**: Integrated Chainlink Functions to fetch the custody account’s balance before each buy transaction. If the balance is below the required notional value, a top-up handler is triggered to sell tokens on the `BuySellManager` contract and transfer funds to the custody account, ensuring seamless transactions.
-
-5. **Modular Buy/Sell Consumer Implementation**  
-   **Context**: Third parties need to interact with the platform’s buy and sell functions programmatically.  
-   **Challenge**: Creating modular, secure functions that verified third parties can call without compromising the system.  
-   **Solution**: Developed `buyConsumer` and `sellConsumer` modular functions in the `BuySellManager` contract, accessible via an allowlist using role-based access control (e.g., OpenZeppelin’s `AccessControl`). Integrated a `TokenPaymentHandler` contract to manage token approvals and transfers, enabling secure third-party interactions.
+## Problems Solved
+1. **Complexity of Tokenization**: Simplifies buying and selling tokenized RWAs through an intuitive interface.
+3. **Accessibility Barriers**: Makes DeFi approachable for non-technical users with MetaMask integration.
+4. **Cross-Chain Limitations**: Enables seamless cross-chain buying via Chainlink CCIP.
+5. **Lack of Transparency**: Provides real-time transaction tracking and blockchain explorer links.
+6. **Market Timing Compliance**: Restricts trading to U.S. market hours using Chainlink Functions.
+8. **Asset Backing Trust**: Ensures minted tokens are fully backed by real assets via Chainlink Functions for Proof of Reserve.
+9. **Manual Processes**: Automates liquidity management and transaction finalization with Chainlink Automation.
 
 ## Technology Stack
 - **Frontend**:
-  - **React**: JavaScript library for building the user interface.
-  - **Next.js**: Framework for server-side rendering and static site generation.
-  - **Material-UI**: Component library for responsive and styled UI elements.
-  - **TradingView Widget**: Embedded for real-time market data visualization.
-- **Blockchain**:
-  - **Ethereum (Sepolia Testnet)**: For cross-chain buying operations.
-  - **Avalanche Fuji Testnet**: For buying and selling operations.
-  - **Solidity**: Smart contract development language.
-  - **Ethers.js**: Library for interacting with Ethereum and Avalanche blockchains.
-  - **MetaMask**: Wallet for user authentication and transaction signing.
-- **Smart Contracts**:
-  - **BuySellManager**: Handles buying and selling on Avalanche Fuji, with modular `buyConsumer` and `sellConsumer` functions for third-party access.
-  - **CrossChainSender**: Facilitates cross-chain buying from Sepolia to Avalanche Fuji via Chainlink CCIP.
-  - **FunctionsConsumer**: Executes Chainlink Functions requests for market status and custody balance checks.
-  - **TokenPaymentHandler**: Manages token approvals and transfers for buy/sell operations, including third-party calls.
-- **Chainlink**:
-  - **Chainlink CCIP**: Enables cross-chain communication between Sepolia and Avalanche Fuji.
-  - **Chainlink Functions**: Fetches real-time market status and custody balance data from external APIs.
-  - **Chainlink Automation**: Handles off-chain processes for cross-chain buying.
-- **Tools**:
-  - **Hardhat**: Development environment for compiling, deploying, and testing smart contracts.
-  - **Node.js**: Runtime for running the application and scripts.
+  - React: JavaScript library for building the user interface.
+  - Next.js: Framework for server-side rendering and static site generation.
+  - Material-UI: Component library for responsive and styled UI elements.
 
+- **Blockchain**:
+  - Ethereum (Sepolia Testnet): Supports cross-chain buying operations.
+  - Avalanche Fuji Testnet: Core Handles buying and selling operations.
+  - Solidity: Language for smart contract development.
+
+- **Chainlink**:
+  - Chainlink Functions: Fetches real-time market status, custody balances, and Proof of Reserve data.
+  - Chainlink CCIP: Enables cross-chain communication between Sepolia and Avalanche Fuji.
+
+## Smart Contracts
+- **BuySellManager**: Manages buy and sell operations on Avalanche Fuji, with modular functions for third-party access.
+- **CrossChainSender**: Facilitates cross-chain buying from Sepolia to Avalanche Fuji using Chainlink CCIP.
+- **FunctionsConsumer**: Handles Chainlink Functions requests for market status, custody balance, and Proof of Reserve checks.
+- **TokenPaymentHandler**: Manages token approvals and transfers for buy/sell operations, including third-party interactions.
+
+## Chainlink Integration
+### Chainlink Functions
+Chainlink Functions enables the platform to fetch off-chain data for on-chain use, such as:
+- **Market Status**: Queries an external API (e.g., Alpha Vantage) to determine if the U.S. market is open, restricting buy/sell actions to 9:30 AM–4:00 PM ET, Monday to Friday.
+- **Custody Balance**: Checks the custody account’s balance to ensure sufficient liquidity for buy transactions.
+- **Proof of Reserve**: Verifies that the custody account holds enough assets to back minted tokens (see [Proof of Reserve](#proof-of-reserve)).
+
+### Chainlink Automation
+Chainlink Automation automates recurring off-chain processes, including:
+- **Liquidity Top-Ups**: Monitors the custody account’s balance and triggers token sales to top up funds when below a threshold.
+- **Cross-Chain Finalization**: Tracks pending cross-chain transactions via Chainlink CCIP and finalizes them on Avalanche Fuji, ensuring reliability despite network delays.
+
+### Chainlink CCIP
+Chainlink Cross-Chain Interoperability Protocol (CCIP) enables seamless buying from Sepolia to Avalanche Fuji by:
+- Burn/Lock tokens on Sepolia.
+- Sending a message to the Avalanche Fuji `BuySellManager` contract to execute the buy.
+- Providing users with transaction status updates via CCIP explorer links.
+
+## Proof of Reserve
+To ensure trust and transparency, CoFi RWA uses Chainlink Functions to implement a **Proof of Reserve** mechanism:
+- **Purpose**: Verifies that every minted token (e.g., tokenized AAPL) is fully backed by assets in a custody account.
+- **Process**: Chainlink Functions queries an external API (e.g., a custodian service) to fetch the custody account’s balance. Before minting new tokens, the smart contract checks that the reserve balance is sufficient to cover the total minted tokens, ensuring a 1:1 asset backing.
+- **Benefit**: Enhances user confidence by providing on-chain verification of asset backing, accessible via blockchain explorers.
 
 ## Application Flow
-1. **User Authentication**:
-   - Users connect their MetaMask wallet, selecting Sepolia or Avalanche Fuji.
-2. **Market Status Check**:
-   - Chainlink Functions queries an external API to verify if the U.S. market is open (9:30 AM–4:00 PM ET, Mon–Fri).
-3. **Token Selection**:
-   - Users choose the asset to buy/sell (e.g., AAPL), payment token (e.g., USDC), and destination chain.
-4. **Liquidity Check**:
-   - Chainlink Functions checks the custody account’s balance. If insufficient, a top-up is triggered via `BuySellManager` to sell tokens and transfer funds.
-5. **Transaction Initiation**:
+1. **User Authentication**: Users connect their MetaMask wallet, selecting Sepolia or Avalanche Fuji.
+2. **Market Status Check**: Chainlink Functions verifies if the U.S. market is open (9:30 AM–4:00 PM ET, Mon–Fri).
+3. **Token Selection**: Users choose the asset (e.g., AAPL), payment token (e.g., USDC), and destination chain.
+4. **Liquidity Check**: Chainlink Functions checks the custody account’s balance; Chainlink Automation triggers a top-up if needed.
+5. **Proof of Reserve**: Chainlink Functions verifies that the custody account has sufficient assets before minting tokens.
+6. **Transaction Initiation**:
    - **Buy**: Approve token spending and buy via `BuySellManager` (Avalanche Fuji) or `CrossChainSender` (Sepolia).
    - **Sell**: Approve and sell tokens via `BuySellManager` (Avalanche Fuji only).
    - **Cross-Chain Buy**: Lock tokens on Sepolia and send a CCIP message to buy on Avalanche Fuji.
-   - **Third-Party Access**: Verified third parties call `buyConsumer` or `sellConsumer` via `TokenPaymentHandler`.
-6. **Transaction Status**:
-   - Real-time updates via a modal and transaction history table, with links to Snowtrace, Etherscan, or CCIP explorers.
-7. **Market Data**:
-   - TradingView widget displays real-time price charts for the selected asset.
+   - **Third-Party Access**: Verified third parties call modular buy/sell functions.
+7. **Transaction Status**: Real-time updates via a modal and transaction history table, with links to Snowtrace, Etherscan, or CCIP explorers.
+8. **Market Data**: TradingView widget displays real-time price charts for the selected asset.
+
+
+these project is for submit Chailink Hackathon and partner track Avalanche
