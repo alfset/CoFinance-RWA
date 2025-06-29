@@ -5,7 +5,7 @@ import tokenABI from "./abis/Token.json";
 
 export const contractAddresses = {
   crossChainSender: "0x5297d72f78348b6f90044101794dc561a317c151",
-  mintBurnManager: "0xbF5A95Fb96Fa02907736DDC6D8352A57E05Ac229",
+  mintBurnManager: "0x8d38c26f402b8374b3eea8a43ab9b84618cdd6cd",
 };
 
 export const tokenAddresses = {
